@@ -175,7 +175,9 @@ Your commands:
                 "timestamp": time.time()
             })
             
-            return error_msgdef is_safe_command(self, command):
+                    return error_msg
+        
+            def is_safe_command(self, command):
         """Check if command is safe to execute"""
         # List of allowed commands/tools
         allowed_tools = [
