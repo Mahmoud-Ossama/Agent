@@ -319,7 +319,8 @@ Your commands:
         for i, cmd in enumerate(self.command_history, 1):
             technical_report += f"### Command {i}\n"
             technical_report += f"**Command:** `{cmd['command']}`\n"
-            technical_report += f"**Return Code:** {cmd['return_code']}\n"            technical_report += f"**Timestamp:** {time.ctime(cmd['timestamp'])}\n\n"
+            technical_report += f"**Return Code:** {cmd['return_code']}\n"
+            technical_report += f"**Timestamp:** {time.ctime(cmd['timestamp'])}\n\n"
             
             if cmd['stdout']:
                 technical_report += f"**Output:**\n```\n{cmd['stdout'][:1000]}...\n```\n\n"
