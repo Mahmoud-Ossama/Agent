@@ -99,9 +99,7 @@ Your commands:
                 
                 commands.append(line)
         
-        return commands
-
-    def execute_command(self, command):
+        return commands    def execute_command(self, command):
         """Execute a shell command and return the output"""
         try:
             logger.info(f"Executing command: {command}")
@@ -110,6 +108,16 @@ Your commands:
             if not self.is_safe_command(command):
                 error_msg = f"Command blocked for security reasons: {command}"
                 logger.warning(error_msg)
+                
+                # Store blocked command in history for analysis
+                self.command_history.append({
+                    "command": command,
+                    "return_code": -1,
+                    "stdout": error_msg,
+                    "stderr": "Security filter blocked execution",
+                    "timestamp": time.time()
+                })
+                
                 return error_msg
             
             # Execute command with timeout
@@ -142,15 +150,34 @@ Your commands:
         except subprocess.TimeoutExpired:
             error_msg = f"Command timed out: {command}"
             logger.error(error_msg)
+            
+            # Store timeout in history
+            self.command_history.append({
+                "command": command,
+                "return_code": -2,
+                "stdout": error_msg,
+                "stderr": "Command execution timeout",
+                "timestamp": time.time()
+            })
+            
             return error_msg
             
         except Exception as e:
             error_msg = f"Error executing command '{command}': {str(e)}"
             logger.error(error_msg)
-            return error_msg
-
-    def is_safe_command(self, command):
-        """Check if command is safe to execute"""        # List of allowed commands/tools
+            
+            # Store error in history
+            self.command_history.append({
+                "command": command,
+                "return_code": -3,
+                "stdout": error_msg,
+                "stderr": str(e),
+                "timestamp": time.time()
+            })
+            
+            return error_msgdef is_safe_command(self, command):
+        """Check if command is safe to execute"""
+        # List of allowed commands/tools
         allowed_tools = [
             'nmap', 'sqlmap', 'nikto', 'dirb', 'gobuster', 'whatweb', 'waybackurls',
             'curl', 'wget', 'netcat', 'nc', 'hydra', 'john', 'hashcat',
@@ -159,23 +186,40 @@ Your commands:
             'cat', 'head', 'tail', 'ls', 'find', 'sort', 'uniq'
         ]
         
-        # Blocked commands for security
+        # Blocked commands for security (exact matches to avoid false positives)
         blocked_commands = [
-            'rm', 'del', 'format', 'fdisk', 'mkfs', 'dd', 'shutdown',
-            'reboot', 'halt', 'poweroff', 'init', 'kill', 'killall',
-            'chmod +x', 'su', 'sudo', 'passwd', 'useradd', 'userdel'
+            'rm -rf', 'rm -f', 'del', 'format', 'fdisk', 'mkfs', 'dd if=', 'shutdown',
+            'reboot', 'halt', 'poweroff', 'init 0', 'kill -9', 'killall',
+            'chmod +x', 'su -', 'sudo su', 'passwd', 'useradd', 'userdel',
+            'mount', 'umount', 'crontab', '/etc/passwd', '/etc/shadow'
         ]
         
         command_lower = command.lower()
         
-        # Check for blocked commands
+        # Check for blocked commands (more specific matching)
         for blocked in blocked_commands:
             if blocked in command_lower:
                 return False
         
+        # Additional security checks
+        dangerous_patterns = [
+            'rm -rf /', 'rm -rf *', '> /dev/sda', 'dd if=/dev/zero',
+            'mkfs.ext4', 'fdisk /dev/', 'echo > /etc/'
+        ]
+        
+        for pattern in dangerous_patterns:
+            if pattern in command_lower:
+                return False
+        
         # Check if command starts with allowed tool
         first_word = command.split()[0] if command.split() else ""
-        return first_word in allowed_tools
+        is_allowed = first_word in allowed_tools
+        
+        # Debug logging
+        if not is_allowed:
+            logger.debug(f"Command blocked: '{command}' - First word: '{first_word}' not in allowed tools")
+        
+        return is_allowed
 
     def run_dynamic_stage(self, stage_name):
         """Run a penetration testing stage dynamically"""
@@ -253,7 +297,8 @@ Your commands:
         # Generate HTML report
         self.generate_html_report()
         
-        logger.info("Dynamic penetration test completed")    def generate_final_report(self):
+        logger.info("Dynamic penetration test completed")
+    def generate_final_report(self):
         """Generate comprehensive final report"""
         # Generate executive summary
         executive_summary = self.generate_executive_summary()
@@ -283,8 +328,7 @@ Your commands:
         report_path = os.path.join(self.results_dir, "dynamic_pentest_report.md")
         with open(report_path, "w", encoding="utf-8") as f:
             f.write(technical_report)
-        
-        # Generate HTML report
+          # Generate HTML report
         html_report_path = self.generate_html_report()
         
         # Display summary to console
@@ -294,16 +338,22 @@ Your commands:
         print(self.format_console_summary())
         print("="*80)
         
+        # Debug: Show blocked commands if any
+        blocked_commands = [cmd for cmd in self.command_history if 'blocked for security reasons' in str(cmd.get('stdout', '')) or 'blocked for security reasons' in str(cmd.get('stderr', ''))]
+        if blocked_commands:
+            print(f"\n⚠️  DEBUG: {len(blocked_commands)} commands were blocked by security filter")
+            for cmd in blocked_commands[:3]:  # Show first 3 blocked commands
+                print(f"   Blocked: {cmd.get('command', 'Unknown')}")
+        
         logger.info(f"Executive summary generated: {summary_path}")
         logger.info(f"Technical report generated: {report_path}")
         logger.info(f"HTML report generated: {html_report_path}")
         
-        return technical_report
-
-    def analyze_command_results(self):
+        return technical_report    def analyze_command_results(self):
         """Analyze command results to extract key findings"""
         successful_commands = []
         failed_commands = []
+        blocked_commands = []
         vulnerabilities_found = []
         tools_used = set()
         
@@ -311,7 +361,14 @@ Your commands:
             tool_name = cmd['command'].split()[0] if cmd['command'].split() else "unknown"
             tools_used.add(tool_name)
             
-            if cmd['return_code'] == 0:
+            # Check if command was blocked
+            if 'blocked for security reasons' in cmd.get('stdout', '') or 'blocked for security reasons' in cmd.get('stderr', ''):
+                blocked_commands.append({
+                    'tool': tool_name,
+                    'command': cmd['command'],
+                    'reason': 'Security filter blocked execution'
+                })
+            elif cmd['return_code'] == 0:
                 successful_commands.append({
                     'tool': tool_name,
                     'command': cmd['command'],
@@ -335,6 +392,7 @@ Your commands:
         return {
             'successful_commands': successful_commands,
             'failed_commands': failed_commands,
+            'blocked_commands': blocked_commands,
             'vulnerabilities_found': vulnerabilities_found,
             'tools_used': list(tools_used),
             'total_commands': len(self.command_history)
@@ -412,9 +470,7 @@ Your commands:
 *Report generated by AI-Powered Penetration Testing Agent*
 """
         
-        return summary
-
-    def format_console_summary(self):
+        return summary    def format_console_summary(self):
         """Format summary for console display"""
         analysis = self.analyze_command_results()
         
@@ -426,6 +482,7 @@ Your commands:
    Total Commands: {analysis['total_commands']}
    Successful: {len(analysis['successful_commands'])} ✅
    Failed: {len(analysis['failed_commands'])} ❌
+   Blocked: {len(analysis['blocked_commands'])} 🛡️
 
 🛠️ TOOLS USED:
 """
@@ -433,6 +490,13 @@ Your commands:
         for tool in analysis['tools_used']:
             status = "✅" if any(cmd['tool'] == tool for cmd in analysis['successful_commands']) else "❌"
             console_output += f"   {tool.upper()}: {status}\n"
+        
+        if analysis['blocked_commands']:
+            console_output += f"\n🛡️ SECURITY BLOCKS:\n"
+            for blocked in analysis['blocked_commands'][:3]:  # Show first 3
+                console_output += f"   {blocked['tool'].upper()}: Blocked by security filter\n"
+            if len(analysis['blocked_commands']) > 3:
+                console_output += f"   ... and {len(analysis['blocked_commands']) - 3} more\n"
         
         console_output += f"""
 🚨 SECURITY STATUS:
@@ -449,6 +513,7 @@ Your commands:
    📋 Executive Summary: results/EXECUTIVE_SUMMARY.md
    🔧 Technical Report: results/dynamic_pentest_report.md
    📊 Command History: results/command_history.json
+   🌐 HTML Report: results/security_report.html
 """
         
         return console_output
