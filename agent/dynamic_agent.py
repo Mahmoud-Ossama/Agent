@@ -250,34 +250,347 @@ Your commands:
         # Generate final report
         self.generate_final_report()
         
-        logger.info("Dynamic penetration test completed")
-
-    def generate_final_report(self):
-        """Generate comprehensive final report"""
-        report_md = self.attack_chain.generate_report()
+        # Generate HTML report
+        self.generate_html_report()
         
-        # Add command history section
-        report_md += "\n\n## Command History\n\n"
+        logger.info("Dynamic penetration test completed")    def generate_final_report(self):
+        """Generate comprehensive final report"""
+        # Generate executive summary
+        executive_summary = self.generate_executive_summary()
+        
+        # Generate technical report
+        technical_report = self.attack_chain.generate_report()
+        
+        # Add command history section to technical report
+        technical_report += "\n\n## Command History\n\n"
         for i, cmd in enumerate(self.command_history, 1):
-            report_md += f"### Command {i}\n"
-            report_md += f"**Command:** `{cmd['command']}`\n"
-            report_md += f"**Return Code:** {cmd['return_code']}\n"
-            report_md += f"**Timestamp:** {time.ctime(cmd['timestamp'])}\n\n"
+            technical_report += f"### Command {i}\n"
+            technical_report += f"**Command:** `{cmd['command']}`\n"
+            technical_report += f"**Return Code:** {cmd['return_code']}\n"
+            technical_report += f"**Timestamp:** {time.ctime(cmd['timestamp'])}\n\n"
             
             if cmd['stdout']:
-                report_md += f"**Output:**\n```\n{cmd['stdout'][:1000]}...\n```\n\n"
+                technical_report += f"**Output:**\n```\n{cmd['stdout'][:1000]}...\n```\n\n"
             
             if cmd['stderr']:
-                report_md += f"**Errors:**\n```\n{cmd['stderr'][:500]}...\n```\n\n"
+                technical_report += f"**Errors:**\n```\n{cmd['stderr'][:500]}...\n```\n\n"
+          # Save executive summary (non-technical)
+        summary_path = os.path.join(self.results_dir, "EXECUTIVE_SUMMARY.md")
+        with open(summary_path, "w", encoding="utf-8") as f:
+            f.write(executive_summary)
         
-        # Save report
+        # Save technical report
         report_path = os.path.join(self.results_dir, "dynamic_pentest_report.md")
         with open(report_path, "w", encoding="utf-8") as f:
-            f.write(report_md)
+            f.write(technical_report)
         
-        logger.info(f"Final report generated: {report_path}")
+        # Generate HTML report
+        html_report_path = self.generate_html_report()
         
-        return report_md
+        # Display summary to console
+        print("\n" + "="*80)
+        print("🎯 PENETRATION TEST RESULTS SUMMARY")
+        print("="*80)
+        print(self.format_console_summary())
+        print("="*80)
+        
+        logger.info(f"Executive summary generated: {summary_path}")
+        logger.info(f"Technical report generated: {report_path}")
+        logger.info(f"HTML report generated: {html_report_path}")
+        
+        return technical_report
+
+    def analyze_command_results(self):
+        """Analyze command results to extract key findings"""
+        successful_commands = []
+        failed_commands = []
+        vulnerabilities_found = []
+        tools_used = set()
+        
+        for cmd in self.command_history:
+            tool_name = cmd['command'].split()[0] if cmd['command'].split() else "unknown"
+            tools_used.add(tool_name)
+            
+            if cmd['return_code'] == 0:
+                successful_commands.append({
+                    'tool': tool_name,
+                    'command': cmd['command'],
+                    'output': cmd['stdout']
+                })
+                
+                # Check for potential vulnerabilities in output
+                if 'vulnerable' in cmd['stdout'].lower() or 'injection' in cmd['stdout'].lower():
+                    vulnerabilities_found.append({
+                        'tool': tool_name,
+                        'type': 'Potential SQL Injection' if 'injection' in cmd['stdout'].lower() else 'Vulnerability',
+                        'output': cmd['stdout'][:200] + '...'
+                    })
+            else:
+                failed_commands.append({
+                    'tool': tool_name,
+                    'command': cmd['command'],
+                    'error': cmd['stderr']
+                })
+        
+        return {
+            'successful_commands': successful_commands,
+            'failed_commands': failed_commands,
+            'vulnerabilities_found': vulnerabilities_found,
+            'tools_used': list(tools_used),
+            'total_commands': len(self.command_history)
+        }
+
+    def generate_executive_summary(self):
+        """Generate non-technical executive summary"""
+        analysis = self.analyze_command_results()
+        
+        summary = f"""# 🎯 PENETRATION TEST EXECUTIVE SUMMARY
+
+## Target Information
+- **Target Website:** {self.target_url}
+- **Test Date:** {time.strftime('%Y-%m-%d %H:%M:%S')}
+- **Test Duration:** Automated AI-driven security assessment
+
+## 📊 Test Overview
+- **Total Security Tools Used:** {len(analysis['tools_used'])}
+- **Total Commands Executed:** {analysis['total_commands']}
+- **Successful Tests:** {len(analysis['successful_commands'])}
+- **Failed Tests:** {len(analysis['failed_commands'])}
+
+## 🔍 Tools Successfully Executed
+"""
+        
+        if analysis['successful_commands']:
+            for cmd in analysis['successful_commands']:
+                summary += f"- ✅ **{cmd['tool'].upper()}** - Security testing tool executed successfully\n"
+        else:
+            summary += "- ❌ No tools executed successfully\n"
+        
+        summary += "\n## 🚨 Security Findings\n"
+        
+        if analysis['vulnerabilities_found']:
+            summary += f"**⚠️ ATTENTION: {len(analysis['vulnerabilities_found'])} potential security issues detected**\n\n"
+            for vuln in analysis['vulnerabilities_found']:
+                summary += f"- **{vuln['type']}** detected by {vuln['tool']}\n"
+                summary += f"  - Details: {vuln['output']}\n\n"
+        else:
+            summary += "- ✅ No obvious vulnerabilities detected in automated scan\n"
+        
+        summary += "\n## 🛠️ Testing Tools Analysis\n"
+        
+        tools_descriptions = {
+            'curl': 'HTTP request analysis - Checks website response headers',
+            'sqlmap': 'SQL Injection testing - Tests for database vulnerabilities',
+            'nikto': 'Web vulnerability scanner - Comprehensive security check',
+            'gobuster': 'Directory discovery - Finds hidden files and folders',
+            'nmap': 'Network scanning - Identifies open ports and services',
+            'wpscan': 'WordPress security - Tests WordPress-specific vulnerabilities'
+        }
+        
+        for tool in analysis['tools_used']:
+            status = "✅ SUCCESS" if any(cmd['tool'] == tool for cmd in analysis['successful_commands']) else "❌ FAILED"
+            description = tools_descriptions.get(tool, 'Security testing tool')
+            summary += f"- **{tool.upper()}** - {status}\n  {description}\n\n"
+        
+        summary += """## 📈 Risk Assessment
+- **Low Risk:** Basic information gathering completed
+- **Medium Risk:** Web application tested for common vulnerabilities
+- **High Risk:** SQL injection and database security tested
+
+## 🎯 Recommendations
+1. Review any vulnerabilities found above immediately
+2. Implement web application firewall (WAF) if not present
+3. Regular security testing should be conducted monthly
+4. Keep all web applications and plugins updated
+
+## 📁 Detailed Reports Available
+- `EXECUTIVE_SUMMARY.md` - This non-technical summary
+- `dynamic_pentest_report.md` - Technical details for IT team
+- `command_history.json` - Complete audit trail
+
+---
+*Report generated by AI-Powered Penetration Testing Agent*
+"""
+        
+        return summary
+
+    def format_console_summary(self):
+        """Format summary for console display"""
+        analysis = self.analyze_command_results()
+        
+        console_output = f"""
+🎯 Target: {self.target_url}
+📅 Test Date: {time.strftime('%Y-%m-%d %H:%M:%S')}
+
+📊 TEST RESULTS:
+   Total Commands: {analysis['total_commands']}
+   Successful: {len(analysis['successful_commands'])} ✅
+   Failed: {len(analysis['failed_commands'])} ❌
+
+🛠️ TOOLS USED:
+"""
+        
+        for tool in analysis['tools_used']:
+            status = "✅" if any(cmd['tool'] == tool for cmd in analysis['successful_commands']) else "❌"
+            console_output += f"   {tool.upper()}: {status}\n"
+        
+        console_output += f"""
+🚨 SECURITY STATUS:
+   Vulnerabilities Found: {len(analysis['vulnerabilities_found'])}
+"""
+        
+        if analysis['vulnerabilities_found']:
+            console_output += "   ⚠️  ATTENTION REQUIRED - Issues detected!\n"
+        else:
+            console_output += "   ✅ No obvious vulnerabilities in automated scan\n"
+        
+        console_output += f"""
+📁 REPORTS GENERATED:
+   📋 Executive Summary: results/EXECUTIVE_SUMMARY.md
+   🔧 Technical Report: results/dynamic_pentest_report.md
+   📊 Command History: results/command_history.json
+"""
+        
+        return console_output
+
+    def generate_html_report(self):
+        """Generate HTML report for easy viewing"""
+        analysis = self.analyze_command_results()
+        
+        html_template = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Penetration Test Results - {self.target_url}</title>
+    <style>
+        body {{ font-family: Arial, sans-serif; margin: 40px; background-color: #f5f5f5; }}
+        .container {{ max-width: 1200px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 0 20px rgba(0,0,0,0.1); }}
+        .header {{ text-align: center; border-bottom: 3px solid #007acc; padding-bottom: 20px; margin-bottom: 30px; }}
+        .section {{ margin: 30px 0; }}
+        .success {{ color: #28a745; }}
+        .warning {{ color: #ffc107; }}
+        .danger {{ color: #dc3545; }}
+        .info {{ color: #007acc; }}
+        .tool-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }}
+        .tool-card {{ border: 1px solid #ddd; padding: 15px; border-radius: 8px; background: #f9f9f9; }}
+        .status-success {{ border-left: 4px solid #28a745; }}
+        .status-failed {{ border-left: 4px solid #dc3545; }}
+        .vulnerability {{ background: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; border-radius: 5px; margin: 10px 0; }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🛡️ Security Assessment Report</h1>
+            <h2 class="info">{self.target_url}</h2>
+            <p><strong>Test Date:</strong> {time.strftime('%Y-%m-%d %H:%M:%S')}</p>
+        </div>
+
+        <div class="section">
+            <h2>📊 Test Summary</h2>
+            <div class="tool-grid">
+                <div class="tool-card">
+                    <h3>Total Commands</h3>
+                    <h2 class="info">{analysis['total_commands']}</h2>
+                </div>
+                <div class="tool-card status-success">
+                    <h3>Successful Tests</h3>
+                    <h2 class="success">{len(analysis['successful_commands'])}</h2>
+                </div>
+                <div class="tool-card status-failed">
+                    <h3>Failed Tests</h3>
+                    <h2 class="danger">{len(analysis['failed_commands'])}</h2>
+                </div>
+                <div class="tool-card">
+                    <h3>Tools Used</h3>
+                    <h2 class="info">{len(analysis['tools_used'])}</h2>
+                </div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>🚨 Security Findings</h2>
+"""
+        
+        if analysis['vulnerabilities_found']:
+            html_template += f"<div class='vulnerability'><h3 class='warning'>⚠️ {len(analysis['vulnerabilities_found'])} Potential Issues Detected</h3>"
+            for vuln in analysis['vulnerabilities_found']:
+                html_template += f"<p><strong>{vuln['type']}</strong> detected by {vuln['tool']}</p>"
+                html_template += f"<p><code>{vuln['output']}</code></p>"
+            html_template += "</div>"
+        else:
+            html_template += "<div class='vulnerability' style='background: #d4edda; border-color: #c3e6cb;'><h3 class='success'>✅ No obvious vulnerabilities detected</h3></div>"
+        
+        html_template += """
+        </div>
+
+        <div class="section">
+            <h2>🛠️ Tools Analysis</h2>
+            <div class="tool-grid">
+"""
+        
+        tools_descriptions = {
+            'curl': 'HTTP request analysis - Checks website response headers',
+            'sqlmap': 'SQL Injection testing - Tests for database vulnerabilities',
+            'nikto': 'Web vulnerability scanner - Comprehensive security check',
+            'gobuster': 'Directory discovery - Finds hidden files and folders',
+            'nmap': 'Network scanning - Identifies open ports and services',
+            'wpscan': 'WordPress security - Tests WordPress-specific vulnerabilities'
+        }
+        
+        for tool in analysis['tools_used']:
+            status = "SUCCESS" if any(cmd['tool'] == tool for cmd in analysis['successful_commands']) else "FAILED"
+            status_class = "status-success" if status == "SUCCESS" else "status-failed"
+            status_color = "success" if status == "SUCCESS" else "danger"
+            description = tools_descriptions.get(tool, 'Security testing tool')
+            
+            html_template += f"""
+                <div class="tool-card {status_class}">
+                    <h3>{tool.upper()}</h3>
+                    <p class="{status_color}"><strong>{status}</strong></p>
+                    <p>{description}</p>
+                </div>
+"""
+        
+        html_template += """
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>📋 Recommendations</h2>
+            <ul>
+                <li>Review any vulnerabilities found above immediately</li>
+                <li>Implement web application firewall (WAF) if not present</li>
+                <li>Regular security testing should be conducted monthly</li>
+                <li>Keep all web applications and plugins updated</li>
+            </ul>
+        </div>
+
+        <div class="section">
+            <h2>📁 Available Reports</h2>
+            <ul>
+                <li><strong>EXECUTIVE_SUMMARY.md</strong> - Non-technical summary</li>
+                <li><strong>dynamic_pentest_report.md</strong> - Technical details</li>
+                <li><strong>command_history.json</strong> - Complete audit trail</li>
+                <li><strong>security_report.html</strong> - This visual report</li>
+            </ul>
+        </div>
+
+        <footer style="text-align: center; margin-top: 40px; padding-top: 20px; border-top: 1px solid #ddd;">
+            <p><em>Report generated by AI-Powered Penetration Testing Agent</em></p>
+        </footer>
+    </div>
+</body>
+</html>"""
+        
+        # Save HTML report
+        html_path = os.path.join(self.results_dir, "security_report.html")
+        with open(html_path, "w", encoding="utf-8") as f:
+            f.write(html_template)
+        
+        logger.info(f"HTML report generated: {html_path}")
+        return html_path
 
 if __name__ == "__main__":
     import argparse

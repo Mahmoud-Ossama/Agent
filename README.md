@@ -41,3 +41,21 @@ For the best experience, I'd recommend:
 WSL2 on Windows - gives you Linux compatibility while staying on Windows
 Kali Linux VM - if you want the full penetration testing environment
 Windows native - for basic testing, but with limited tool availability
+
+
+# Run the enhanced agent
+./run_dynamic.sh https://testphp.vulnweb.com
+
+# After completion, view the results:
+
+# 1. Executive Summary (non-technical)
+cat results/EXECUTIVE_SUMMARY.md
+
+# 2. Visual HTML Report (open in browser)
+firefox results/security_report.html
+
+# 3. Technical Report (for IT team)
+cat results/dynamic_pentest_report.md
+
+# 4. Command History (audit trail)
+cat results/command_history.json
