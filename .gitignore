@@ -8,3 +8,6 @@ __pycache__/
 
 # JSON data files
 agent/memory/agent_memory.json
+
+results/
+.venv/

@@ -19,6 +19,23 @@ class DynamicPenTestAgent:
         os.makedirs(self.results_dir, exist_ok=True)
         self.command_history = []
         
+        # Configurable timeouts for different tools
+        self.command_timeouts = {
+            'sqlmap': 1800,  # 30 minutes for sqlmap
+            'nikto': 900,    # 15 minutes for nikto
+            'nmap': 600,     # 10 minutes for nmap
+            'dirb': 600,     # 10 minutes for dirb
+            'gobuster': 600, # 10 minutes for gobuster
+            'hydra': 1800,   # 30 minutes for hydra
+            'katana': 300,   # 5 minutes for katana
+            'amass': 900,    # 15 minutes for amass
+            'subfinder': 300, # 5 minutes for subfinder
+            'assetfinder': 300, # 5 minutes for assetfinder
+            'sublist3r': 600, # 10 minutes for sublist3r
+            'waybackurls': 300, # 5 minutes for waybackurls
+            'default': 300   # 5 minutes default
+        }
+        
     def get_available_tools(self):
         """Get list of available penetration testing tools"""
         tools = {
@@ -47,10 +64,16 @@ class DynamicPenTestAgent:
             "wfuzz": "Web application fuzzer",
             "ffuf": "Fast web fuzzer",
             "burpsuite": "Web application security testing",
-            "metasploit": "Penetration testing framework"
+            "metasploit": "Penetration testing framework",
+            "katana": "Fast web crawler and spider tool",
+            "waybackurls": "Web archive URL enumeration",
+            "subfinder": "Subdomain discovery tool",
+            "assetfinder": "Asset discovery tool",
+            "amass": "Network mapping and attack surface discovery",
+            "sublist3r": "Subdomain enumeration tool"
         }
         return tools
-
+    
     def ask_llm_for_commands(self, current_stage, findings):
         """Ask LLM what commands to execute next"""
         available_tools = self.get_available_tools()
@@ -79,8 +102,26 @@ nikto -h {self.target_url}
 Your commands:
 """
         
-        response = self.llm.generate(prompt)
-        return self.parse_commands(response)
+        try:
+            response = self.llm.generate(prompt)
+            
+            # Check if LLM returned an error message
+            if response and response.startswith("Error generating"):
+                logger.error(f"LLM failed to generate response: {response}")
+                return self.get_fallback_commands(current_stage)
+            
+            commands = self.parse_commands(response)
+            
+            # If no valid commands were parsed, use fallback
+            if not commands:
+                logger.warning(f"No valid commands parsed from LLM response, using fallback for stage: {current_stage}")
+                return self.get_fallback_commands(current_stage)
+                
+            return commands
+            
+        except Exception as e:
+            logger.error(f"Exception while asking LLM for commands: {str(e)}")
+            return self.get_fallback_commands(current_stage)
     
     def parse_commands(self, response):
         """Parse LLM response to extract valid commands"""
@@ -121,14 +162,20 @@ Your commands:
                 })
                 
                 return error_msg
-            
+                
             # Execute command with timeout
+            # Get timeout based on command
+            first_word = command.split()[0] if command.split() else "default"
+            timeout = self.command_timeouts.get(first_word, self.command_timeouts['default'])
+            
+            logger.info(f"Executing with {timeout}s timeout: {command}")
+            
             result = subprocess.run(
                 command,
                 shell=True,
                 capture_output=True,
                 text=True,
-                timeout=300,  # 5 minute timeout
+                timeout=timeout,
                 cwd=self.results_dir
             )
             
@@ -166,7 +213,8 @@ Your commands:
             
         except Exception as e:
             error_msg = f"Error executing command '{command}': {str(e)}"
-            logger.error(error_msg)            
+            logger.error(error_msg)
+            
             # Store error in history
             self.command_history.append({
                 "command": command,
@@ -186,7 +234,9 @@ Your commands:
             'curl', 'wget', 'netcat', 'nc', 'hydra', 'john', 'hashcat',
             'wpscan', 'enum4linux', 'smbclient', 'dig', 'host', 'whois',
             'ping', 'traceroute', 'masscan', 'wfuzz', 'ffuf', 'grep',
-            'cat', 'head', 'tail', 'ls', 'find', 'sort', 'uniq'        ]
+            'cat', 'head', 'tail', 'ls', 'find', 'sort', 'uniq',
+            'katana', 'subfinder', 'assetfinder', 'amass', 'sublist3r'
+        ]
         
         # Blocked commands for security (exact matches to avoid false positives)
         blocked_commands = [
@@ -206,7 +256,8 @@ Your commands:
         # Additional security checks
         dangerous_patterns = [
             'rm -rf /', 'rm -rf *', '> /dev/sda', 'dd if=/dev/zero',
-            'mkfs.ext4', 'fdisk /dev/', 'echo > /etc/'        ]
+            'mkfs.ext4', 'fdisk /dev/', 'echo > /etc/'
+        ]
         
         for pattern in dangerous_patterns:
             if pattern in command_lower:
@@ -215,16 +266,10 @@ Your commands:
         # Check if command starts with allowed tool
         first_word = command.split()[0] if command.split() else ""
         is_allowed = first_word in allowed_tools
-          # Debug logging
-        print(f"🔍 DEBUG: Checking command: '{command}'")
-        print(f"🔍 DEBUG: First word: '{first_word}'")
-        print(f"🔍 DEBUG: Is '{first_word}' in allowed tools? {first_word in allowed_tools}")
         
         if not is_allowed:
-            print(f"❌ DEBUG: Command BLOCKED - '{first_word}' not in allowed tools")
-            logger.warning(f"Command blocked: '{command}' - First word: '{first_word}' not in allowed tools: {allowed_tools}")
+            logger.warning(f"Command blocked: '{command}' - First word: '{first_word}' not in allowed tools")
         else:
-            print(f"✅ DEBUG: Command ALLOWED - '{first_word}' found in allowed tools")
             logger.debug(f"Command allowed: '{command}' - First word: '{first_word}' found in allowed tools")
         
         return is_allowed
@@ -242,12 +287,20 @@ Your commands:
         if not commands:
             logger.warning(f"No commands received for stage: {stage_name}")
             return "No commands to execute"
-        
+            
         # Execute each command
         stage_output = f"=== {stage_name.upper()} STAGE ===\n\n"
         
-        for command in commands:
-            logger.info(f"Executing: {command}")
+        for i, command in enumerate(commands, 1):
+            logger.info(f"Executing command {i}/{len(commands)}: {command}")
+            
+            # Get expected timeout for this command
+            first_word = command.split()[0] if command.split() else "default"
+            timeout = self.command_timeouts.get(first_word, self.command_timeouts['default'])
+            
+            if timeout > 300:  # If timeout is more than 5 minutes, show progress message
+                print(f"⏳ Running {first_word} (may take up to {timeout//60} minutes)...")
+            
             output = self.execute_command(command)
             stage_output += f"{output}\n{'='*50}\n\n"
             
@@ -298,7 +351,8 @@ Your commands:
         history_file = os.path.join(self.results_dir, "command_history.json")
         with open(history_file, "w", encoding="utf-8") as f:
             json.dump(self.command_history, f, indent=2)
-          # Generate final report
+            
+        # Generate final report
         self.generate_final_report()
         
         # Generate HTML report
@@ -347,12 +401,6 @@ Your commands:
         print("="*80)
         print(self.format_console_summary())
         print("="*80)
-        
-        # Debug: Show blocked commands if any
-        blocked_commands = [cmd for cmd in self.command_history if 'blocked for security reasons' in str(cmd.get('stdout', '')) or 'blocked for security reasons' in str(cmd.get('stderr', ''))]
-        if blocked_commands:
-            print(f"\n⚠️  DEBUG: {len(blocked_commands)} commands were blocked by security filter")            for cmd in blocked_commands[:3]:  # Show first 3 blocked commands
-                print(f"   Blocked: {cmd.get('command', 'Unknown')}")
         
         logger.info(f"Executive summary generated: {summary_path}")
         logger.info(f"Technical report generated: {report_path}")
@@ -453,7 +501,17 @@ Your commands:
             'nikto': 'Web vulnerability scanner - Comprehensive security check',
             'gobuster': 'Directory discovery - Finds hidden files and folders',
             'nmap': 'Network scanning - Identifies open ports and services',
-            'wpscan': 'WordPress security - Tests WordPress-specific vulnerabilities'
+            'wpscan': 'WordPress security - Tests WordPress-specific vulnerabilities',
+            'katana': 'Web crawling - Fast website structure discovery',
+            'waybackurls': 'Archive analysis - Historical website content discovery',
+            'subfinder': 'Subdomain discovery - Finds subdomains of target',
+            'assetfinder': 'Asset discovery - Identifies digital assets',
+            'amass': 'Network mapping - Advanced attack surface discovery',
+            'sublist3r': 'Subdomain enumeration - Python-based subdomain finder',
+            'whatweb': 'Technology identification - Identifies web technologies',
+            'dirb': 'Directory brute force - Finds hidden directories',
+            'masscan': 'Fast port scanning - High-speed network discovery',
+            'ffuf': 'Web fuzzing - Fast directory and parameter discovery'
         }
         
         for tool in analysis['tools_used']:
@@ -614,7 +672,17 @@ Your commands:
             'nikto': 'Web vulnerability scanner - Comprehensive security check',
             'gobuster': 'Directory discovery - Finds hidden files and folders',
             'nmap': 'Network scanning - Identifies open ports and services',
-            'wpscan': 'WordPress security - Tests WordPress-specific vulnerabilities'
+            'wpscan': 'WordPress security - Tests WordPress-specific vulnerabilities',
+            'katana': 'Web crawling - Fast website structure discovery',
+            'waybackurls': 'Archive analysis - Historical website content discovery',
+            'subfinder': 'Subdomain discovery - Finds subdomains of target',
+            'assetfinder': 'Asset discovery - Identifies digital assets',
+            'amass': 'Network mapping - Advanced attack surface discovery',
+            'sublist3r': 'Subdomain enumeration - Python-based subdomain finder',
+            'whatweb': 'Technology identification - Identifies web technologies',
+            'dirb': 'Directory brute force - Finds hidden directories',
+            'masscan': 'Fast port scanning - High-speed network discovery',
+            'ffuf': 'Web fuzzing - Fast directory and parameter discovery'
         }
         
         for tool in analysis['tools_used']:
@@ -669,6 +737,53 @@ Your commands:
         
         logger.info(f"HTML report generated: {html_path}")
         return html_path
+
+    def get_fallback_commands(self, stage_name):
+        """Provide fallback commands when LLM fails"""
+        logger.info(f"Using fallback commands for stage: {stage_name}")
+        
+        # Extract domain from URL for better command targeting
+        domain = self.target_url.replace('http://', '').replace('https://', '').split('/')[0]
+        
+        # Comprehensive fallback commands based on stage
+        fallback_commands = {
+            "reconnaissance": [
+                f"whatweb {self.target_url}",
+                f"curl -I {self.target_url}",
+                f"nmap -sV -sC {domain}",
+                f"dig {domain}",
+                f"whois {domain}"
+            ],
+            "enumeration": [
+                f"gobuster dir -u {self.target_url} -w /usr/share/wordlists/dirb/common.txt",
+                f"nikto -h {self.target_url}",
+                f"waybackurls {domain}",
+                f"subfinder -d {domain}"
+            ],
+            "scanning": [
+                f"nmap -sV -sC -p- {domain}",
+                f"masscan -p1-65535 {domain} --rate=1000",
+                f"curl -s {self.target_url}/robots.txt",
+                f"curl -s {self.target_url}/sitemap.xml"
+            ],
+            "vulnerability_assessment": [
+                f"nikto -h {self.target_url}",
+                f"sqlmap -u '{self.target_url}' --batch --risk=1 --level=1",
+                f"dirb {self.target_url}",
+                f"wpscan --url {self.target_url}"
+            ],
+            "exploitation": [
+                f"sqlmap -u '{self.target_url}' --batch --dbs",
+                f"curl -X POST {self.target_url}",
+                f"ffuf -w /usr/share/wordlists/dirb/common.txt -u {self.target_url}/FUZZ"
+            ]
+        }
+        
+        # Get fallback commands for the stage, or default reconnaissance commands
+        commands = fallback_commands.get(stage_name.lower(), fallback_commands["reconnaissance"])
+        
+        logger.info(f"Fallback commands for {stage_name}: {commands}")
+        return commands
 
 if __name__ == "__main__":
     import argparse
