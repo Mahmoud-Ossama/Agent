@@ -11,6 +11,8 @@ import random
 import logging
 import asyncio
 import threading
+import platform
+import tempfile
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -41,12 +43,15 @@ class TerminalSession:
     session_history: List[Dict]
     active: bool
     stage: str
+    window_title: str
+    script_file: Optional[str]
 
 class MultiTerminalController:
     """Advanced multi-terminal controller for parallel pentesting"""
     
     def __init__(self, target_url: str, max_terminals: int = 4):
         self.target_url = target_url
+        self.target_domain = self._extract_domain(target_url)
         self.max_terminals = max_terminals
         self.terminals: Dict[int, TerminalSession] = {}
         self.llm = get_llm()
@@ -61,9 +66,27 @@ class MultiTerminalController:
         self.completed_commands = []
         self.stage_results = {}
         
+    def _extract_domain(self, url: str) -> str:
+        """Extract domain from URL for command usage"""
+        # Remove protocol if present
+        if '://' in url:
+            domain = url.split('://')[1]
+        else:
+            domain = url
+        
+        # Remove port if present
+        if ':' in domain and not domain.count(':') > 1:  # Not IPv6
+            domain = domain.split(':')[0]
+        
+        # Remove path if present
+        if '/' in domain:
+            domain = domain.split('/')[0]
+        
+        return domain.strip()
+    
     def initialize_terminals(self):
-        """Initialize multiple terminal sessions"""
-        logger.info(f"🖥️  Initializing {self.max_terminals} terminal sessions...")
+        """Initialize multiple visible terminal sessions"""
+        logger.info(f"🖥️  Initializing {self.max_terminals} visible terminal sessions...")
         
         for i in range(self.max_terminals):
             terminal = TerminalSession(
@@ -72,37 +95,145 @@ class MultiTerminalController:
                 current_directory=os.getcwd(),
                 session_history=[],
                 active=True,
-                stage="ready"
+                stage="ready",
+                window_title=f"MCP Terminal {i} - Ready",
+                script_file=None
             )
             self.terminals[i] = terminal
-            logger.info(f"✅ Terminal {i} ready")
+            logger.info(f"✅ Terminal {i} ready for visible execution")
+    
+    def _get_terminal_command(self, terminal_id: int, command: str, stage: str) -> Tuple[str, str]:
+        """Get platform-specific command to open terminal with script"""
+        system = platform.system().lower()
+        
+        # Create a temporary script file for the command
+        script_dir = os.path.join("results", "terminal_scripts")
+        os.makedirs(script_dir, exist_ok=True)
+        
+        script_file = os.path.join(script_dir, f"terminal_{terminal_id}_{stage}.sh")
+        
+        if system == "windows":
+            # Windows batch script
+            script_file = script_file.replace(".sh", ".bat")
+            with open(script_file, "w") as f:
+                f.write(f'@echo off\n')
+                f.write(f'title MCP Terminal {terminal_id} - {stage.upper()}\n')
+                f.write(f'echo.\n')
+                f.write(f'echo 🖥️  MCP Terminal {terminal_id} - {stage.upper()} Stage\n')
+                f.write(f'echo 🎯 Target: {self.target_url}\n')
+                f.write(f'echo ⌨️  Preparing to execute: {command[:50]}...\n')
+                f.write(f'echo.\n')
+                f.write(f'pause\n')  # Wait for user to see the setup
+                f.write(f'echo 🧠 Thinking about command...\n')
+                f.write(f'timeout /t 3 >nul\n')  # Thinking delay
+                f.write(f'echo ⌨️  Typing command...\n')
+                f.write(f'timeout /t 2 >nul\n')  # Typing delay
+                f.write(f'echo.\n')
+                f.write(f'echo ^> {command}\n')  # Show the command
+                f.write(f'echo.\n')
+                f.write(f'{command}\n')  # Execute the command
+                f.write(f'echo.\n')
+                f.write(f'echo ✅ Command completed in Terminal {terminal_id}\n')
+                f.write(f'echo 📝 Results saved to logs...\n')
+                f.write(f'pause\n')
+            
+            # PowerShell command to open new window
+            terminal_cmd = f'start "MCP Terminal {terminal_id} - {stage.upper()}" cmd /k "{script_file}"'
+            
+        elif system == "linux":
+            # Linux shell script
+            with open(script_file, "w") as f:
+                f.write(f'#!/bin/bash\n')
+                f.write(f'echo ""\n')
+                f.write(f'echo "🖥️  MCP Terminal {terminal_id} - {stage.upper()} Stage"\n')
+                f.write(f'echo "🎯 Target: {self.target_url}"\n')
+                f.write(f'echo "⌨️  Preparing to execute: {command[:50]}..."\n')
+                f.write(f'echo ""\n')
+                f.write(f'read -p "Press Enter to continue..."\n')
+                f.write(f'echo "🧠 Thinking about command..."\n')
+                f.write(f'sleep 3\n')
+                f.write(f'echo "⌨️  Typing command..."\n')
+                f.write(f'sleep 2\n')
+                f.write(f'echo ""\n')
+                f.write(f'echo "> {command}"\n')
+                f.write(f'echo ""\n')
+                f.write(f'{command}\n')
+                f.write(f'echo ""\n')
+                f.write(f'echo "✅ Command completed in Terminal {terminal_id}"\n')
+                f.write(f'echo "📝 Results saved to logs..."\n')
+                f.write(f'read -p "Press Enter to close terminal..."\n')
+            
+            os.chmod(script_file, 0o755)  # Make executable
+            
+            # Try different terminal emulators
+            if os.system("which gnome-terminal > /dev/null 2>&1") == 0:
+                terminal_cmd = f'gnome-terminal --title="MCP Terminal {terminal_id} - {stage.upper()}" -- bash "{script_file}"'
+            elif os.system("which xterm > /dev/null 2>&1") == 0:
+                terminal_cmd = f'xterm -title "MCP Terminal {terminal_id} - {stage.upper()}" -e bash "{script_file}"'
+            elif os.system("which konsole > /dev/null 2>&1") == 0:
+                terminal_cmd = f'konsole --new-tab --title="MCP Terminal {terminal_id} - {stage.upper()}" -e bash "{script_file}"'
+            else:
+                # Fallback to x-terminal-emulator
+                terminal_cmd = f'x-terminal-emulator -title "MCP Terminal {terminal_id} - {stage.upper()}" -e bash "{script_file}"'
+        
+        elif system == "darwin":  # macOS
+            with open(script_file, "w") as f:
+                f.write(f'#!/bin/bash\n')
+                f.write(f'echo ""\n')
+                f.write(f'echo "🖥️  MCP Terminal {terminal_id} - {stage.upper()} Stage"\n')
+                f.write(f'echo "🎯 Target: {self.target_url}"\n')
+                f.write(f'echo "⌨️  Preparing to execute: {command[:50]}..."\n')
+                f.write(f'echo ""\n')
+                f.write(f'read -p "Press Enter to continue..."\n')
+                f.write(f'echo "🧠 Thinking about command..."\n')
+                f.write(f'sleep 3\n')
+                f.write(f'echo "⌨️  Typing command..."\n')
+                f.write(f'sleep 2\n')
+                f.write(f'echo ""\n')
+                f.write(f'echo "> {command}"\n')
+                f.write(f'echo ""\n')
+                f.write(f'{command}\n')
+                f.write(f'echo ""\n')
+                f.write(f'echo "✅ Command completed in Terminal {terminal_id}"\n')
+                f.write(f'echo "📝 Results saved to logs..."\n')
+                f.write(f'read -p "Press Enter to close terminal..."\n')
+            
+            os.chmod(script_file, 0o755)
+            terminal_cmd = f'osascript -e \'tell app "Terminal" to do script "bash {script_file}"\''
+        
+        else:
+            # Fallback for unknown systems
+            script_file = None
+            terminal_cmd = command
+        
+        return terminal_cmd, script_file
     
     def get_stage_commands(self, stage: str) -> List[ParallelCommand]:
         """Get commands for a specific stage with parallel execution plan"""
         
         commands_map = {
             'reconnaissance': [
-                ParallelCommand(f"whois {self.target_url}", "reconnaissance", 0, 1, [], 10.0, "domain_info"),
-                ParallelCommand(f"nslookup {self.target_url}", "reconnaissance", 1, 1, [], 5.0, "dns_lookup"),
-                ParallelCommand(f"dig {self.target_url}", "reconnaissance", 2, 1, [], 5.0, "dns_detailed"),
-                ParallelCommand(f"theHarvester -d {self.target_url} -b all -l 50", "reconnaissance", 3, 2, [], 30.0, "osint"),
+                ParallelCommand(f"whois {self.target_domain}", "reconnaissance", 0, 1, [], 10.0, "domain_info"),
+                ParallelCommand(f"nslookup {self.target_domain}", "reconnaissance", 1, 1, [], 5.0, "dns_lookup"),
+                ParallelCommand(f"dig {self.target_domain} ANY", "reconnaissance", 2, 1, [], 5.0, "dns_detailed"),
+                ParallelCommand(f"theHarvester -d {self.target_domain} -b all -l 50", "reconnaissance", 3, 2, [], 30.0, "osint"),
             ],
             'enumeration': [
-                ParallelCommand(f"nmap -sS -Pn -T4 {self.target_url}", "enumeration", 0, 1, ["reconnaissance"], 45.0, "port_scan"),
-                ParallelCommand(f"nmap -sV -T4 {self.target_url}", "enumeration", 1, 1, ["reconnaissance"], 60.0, "service_scan"),
-                ParallelCommand(f"nmap -sC -T4 {self.target_url}", "enumeration", 2, 2, ["reconnaissance"], 90.0, "script_scan"),
+                ParallelCommand(f"nmap -sS -Pn -T4 {self.target_domain}", "enumeration", 0, 1, ["reconnaissance"], 45.0, "port_scan"),
+                ParallelCommand(f"nmap -sV -T4 {self.target_domain}", "enumeration", 1, 1, ["reconnaissance"], 60.0, "service_scan"),
+                ParallelCommand(f"nmap -sC -T4 {self.target_domain}", "enumeration", 2, 2, ["reconnaissance"], 90.0, "script_scan"),
                 ParallelCommand(f"whatweb {self.target_url}", "enumeration", 3, 1, ["reconnaissance"], 15.0, "web_tech"),
             ],
             'vulnerability_analysis': [
-                ParallelCommand(f"nmap --script vuln -T4 {self.target_url}", "vulnerability_analysis", 0, 1, ["enumeration"], 120.0, "vuln_scan"),
-                ParallelCommand(f"nikto -h {self.target_url}", "vulnerability_analysis", 1, 1, ["enumeration"], 180.0, "web_vuln"),
-                ParallelCommand(f"dirb http://{self.target_url}/", "vulnerability_analysis", 2, 2, ["enumeration"], 300.0, "directory_scan"),
-                ParallelCommand(f"sqlmap -u 'http://{self.target_url}' --batch --crawl=2", "vulnerability_analysis", 3, 1, ["enumeration"], 240.0, "sql_injection"),
+                ParallelCommand(f"nmap --script vuln -T4 {self.target_domain}", "vulnerability_analysis", 0, 1, ["enumeration"], 120.0, "vuln_scan"),
+                ParallelCommand(f"nikto -h {self.target_url} -maxtime 300", "vulnerability_analysis", 1, 1, ["enumeration"], 300.0, "web_vuln"),
+                ParallelCommand(f"dirb {self.target_url}/ -w", "vulnerability_analysis", 2, 2, ["enumeration"], 180.0, "directory_scan"),
+                ParallelCommand(f"sqlmap -u '{self.target_url}' --batch --crawl=2 --timeout=60 --retries=0", "vulnerability_analysis", 3, 1, ["enumeration"], 120.0, "sql_injection"),
             ],
             'exploitation': [
-                ParallelCommand(f"msfconsole -q -x 'search {self.target_url}; exit'", "exploitation", 0, 1, ["vulnerability_analysis"], 30.0, "metasploit_search"),
+                ParallelCommand(f"msfconsole -q -x 'search {self.target_domain}; exit'", "exploitation", 0, 1, ["vulnerability_analysis"], 30.0, "metasploit_search"),
                 ParallelCommand(f"searchsploit apache", "exploitation", 1, 2, ["vulnerability_analysis"], 15.0, "exploit_search"),
-                ParallelCommand(f"hydra -l admin -P /usr/share/wordlists/rockyou.txt {self.target_url} http-get", "exploitation", 2, 3, ["vulnerability_analysis"], 600.0, "brute_force"),
+                ParallelCommand(f"hydra -l admin -P /usr/share/wordlists/rockyou.txt {self.target_domain} http-get -t 4 -W 30", "exploitation", 2, 3, ["vulnerability_analysis"], 180.0, "brute_force"),
             ]
         }
         
@@ -118,68 +249,76 @@ class MultiTerminalController:
         
         return True
     
-    def simulate_human_typing(self, command: str, terminal_id: int) -> str:
-        """Simulate human-like typing for a command"""
-        logger.info(f"🧠 Terminal {terminal_id}: Thinking about command: {command[:50]}...")
+    def simulate_human_typing_visible(self, command: str, terminal_id: int, stage: str) -> str:
+        """Simulate human-like typing in visible terminal"""
+        logger.info(f"🧠 Terminal {terminal_id}: Preparing visible execution for {stage}")
+        logger.info(f"🎯 Command: {command[:50]}...")
         
-        # Human thinking time
-        thinking_time = random.uniform(2.0, 5.0)
-        time.sleep(thinking_time)
+        # Update terminal window title
+        terminal = self.terminals[terminal_id]
+        terminal.window_title = f"MCP Terminal {terminal_id} - {stage.upper()} - Executing"
+        terminal.stage = stage
         
-        # Simulate typing with random delays
-        logger.info(f"⌨️  Terminal {terminal_id}: Typing command...")
-        
-        typed_chars = []
-        for char in command:
-            typed_chars.append(char)
-            
-            # Random typing delay
-            delay = random.uniform(0.05, 0.2)
-            time.sleep(delay)
-            
-            # Occasional longer pauses (thinking)
-            if char == ' ' and random.random() < 0.15:
-                pause = random.uniform(0.5, 2.0)
-                time.sleep(pause)
-            
-            # Occasional typos and corrections
-            if random.random() < 0.02 and char.isalpha():
-                # Make a typo
-                wrong_char = random.choice('abcdefghijklmnopqrstuvwxyz')
-                typed_chars[-1] = wrong_char
-                time.sleep(0.3)  # Realize mistake
-                typed_chars[-1] = char  # Correct it
-                time.sleep(0.2)
-        
-        # Pause before hitting Enter
-        enter_delay = random.uniform(0.5, 2.0)
-        time.sleep(enter_delay)
-        
-        return ''.join(typed_chars)
+        # The actual typing simulation will happen in the visible terminal window
+        # This method prepares the command for visible execution
+        return command
     
     def execute_command_in_terminal(self, cmd: ParallelCommand) -> Dict:
-        """Execute a command in specific terminal with human simulation"""
+        """Execute a command in a visible terminal window with human-like behavior"""
         terminal = self.terminals[cmd.terminal_id]
         
-        logger.info(f"🎯 Terminal {cmd.terminal_id}: Starting {cmd.category} - {cmd.command[:50]}...")
+        logger.info(f"🎯 Terminal {cmd.terminal_id}: Opening visible terminal for {cmd.category}")
+        logger.info(f"🖥️  Stage: {cmd.stage} | Command: {cmd.command[:50]}...")
         
-        # Simulate human typing
-        typed_command = self.simulate_human_typing(cmd.command, cmd.terminal_id)
+        # Prepare command for visible execution
+        prepared_command = self.simulate_human_typing_visible(cmd.command, cmd.terminal_id, cmd.stage)
         
         try:
-            # Execute command
             start_time = time.time()
             
+            # Get platform-specific terminal command
+            terminal_cmd, script_file = self._get_terminal_command(cmd.terminal_id, prepared_command, cmd.stage)
+            
+            # Store script file reference
+            terminal.script_file = script_file
+            
+            logger.info(f"🚀 Terminal {cmd.terminal_id}: Launching visible terminal window...")
+            
+            # Execute command in visible terminal
+            # For better control, we'll also capture output using a separate process
+            output_file = os.path.join("results", "terminal_logs", f"{cmd.stage}_terminal_{cmd.terminal_id}_output.log")
+            os.makedirs(os.path.dirname(output_file), exist_ok=True)
+            
+            # Launch visible terminal (non-blocking)
+            terminal_process = subprocess.Popen(
+                terminal_cmd,
+                shell=True,
+                cwd=terminal.current_directory
+            )
+            
+            # Also run command in background to capture output
             result = subprocess.run(
-                typed_command,
+                prepared_command,
                 shell=True,
                 capture_output=True,
                 text=True,
-                timeout=cmd.expected_duration + 60,  # Add buffer to expected duration
+                timeout=min(cmd.expected_duration + 60, 600),  # Cap at 10 minutes
                 cwd=terminal.current_directory
             )
             
             execution_time = time.time() - start_time
+            
+            # Save output to file
+            with open(output_file, "w", encoding="utf-8") as f:
+                f.write(f"Terminal {cmd.terminal_id} - {cmd.stage.upper()} Stage\n")
+                f.write(f"Command: {cmd.command}\n")
+                f.write(f"Execution Time: {execution_time:.2f}s\n")
+                f.write(f"Return Code: {result.returncode}\n")
+                f.write(f"Timestamp: {time.ctime()}\n\n")
+                f.write("STDOUT:\n")
+                f.write(result.stdout)
+                f.write("\n\nSTDERR:\n")
+                f.write(result.stderr)
             
             # Store result
             command_result = {
@@ -192,23 +331,33 @@ class MultiTerminalController:
                 'stderr': result.stderr,
                 'execution_time': execution_time,
                 'timestamp': time.time(),
-                'success': result.returncode == 0
+                'success': result.returncode == 0,
+                'visible_terminal': True,
+                'output_file': output_file
             }
             
             # Update terminal history
             terminal.session_history.append(command_result)
+            terminal.process = terminal_process
             
             # Update intelligent chain
-            self.intelligent_chain.update_command_history(
-                cmd.command, 
-                result.stdout + result.stderr, 
-                result.returncode
-            )
+            try:
+                if result.stdout.strip() or result.stderr.strip():
+                    self.intelligent_chain.update_command_history(
+                        cmd.command, 
+                        result.stdout + result.stderr, 
+                        result.returncode
+                    )
+            except Exception as e:
+                logger.warning(f"⚠️  Failed to update intelligent chain: {str(e)}")
             
-            logger.info(f"✅ Terminal {cmd.terminal_id}: Completed {cmd.category} in {execution_time:.2f}s")
+            logger.info(f"✅ Terminal {cmd.terminal_id}: Command executed in visible terminal - {cmd.category} in {execution_time:.2f}s")
+            logger.info(f"📄 Output saved to: {output_file}")
+            
             return command_result
             
         except subprocess.TimeoutExpired:
+            execution_time = time.time() - start_time
             error_result = {
                 'command': cmd.command,
                 'terminal_id': cmd.terminal_id,
@@ -216,13 +365,14 @@ class MultiTerminalController:
                 'category': cmd.category,
                 'return_code': -1,
                 'stdout': '',
-                'stderr': f'Command timed out after {cmd.expected_duration + 60}s',
-                'execution_time': cmd.expected_duration + 60,
+                'stderr': f'Command timed out after {execution_time:.2f}s (max: 600s)',
+                'execution_time': execution_time,
                 'timestamp': time.time(),
-                'success': False
+                'success': False,
+                'visible_terminal': True
             }
             
-            logger.warning(f"⏰ Terminal {cmd.terminal_id}: Command timed out - {cmd.category}")
+            logger.warning(f"⏰ Terminal {cmd.terminal_id}: Visible terminal command timed out - {cmd.category} after {execution_time:.2f}s")
             return error_result
             
         except Exception as e:
@@ -236,11 +386,37 @@ class MultiTerminalController:
                 'stderr': str(e),
                 'execution_time': 0,
                 'timestamp': time.time(),
-                'success': False
+                'success': False,
+                'visible_terminal': True
             }
             
-            logger.error(f"❌ Terminal {cmd.terminal_id}: Error executing {cmd.category} - {str(e)}")
+            logger.error(f"❌ Terminal {cmd.terminal_id}: Error in visible terminal execution - {cmd.category} - {str(e)}")
             return error_result
+    
+    def display_stage_banner(self, stage: str):
+        """Display visual banner for stage execution"""
+        banner_width = 80
+        stage_title = f"🔍 STAGE: {stage.upper()}"
+        
+        print("\n" + "="*banner_width)
+        print(f"{stage_title:^{banner_width}}")
+        print("="*banner_width)
+        
+        stage_descriptions = {
+            'reconnaissance': "🕵️  Gathering intelligence about the target",
+            'enumeration': "🔍 Discovering services and attack surface", 
+            'vulnerability_analysis': "⚠️  Identifying security vulnerabilities",
+            'exploitation': "💥 Attempting to exploit discovered vulnerabilities"
+        }
+        
+        description = stage_descriptions.get(stage, "Processing...")
+        print(f"{description:^{banner_width}}")
+        print("="*banner_width)
+        
+        terminals_info = f"🖥️  Opening {self.max_terminals} visible terminals for parallel execution"
+        print(f"{terminals_info:^{banner_width}}")
+        print("="*banner_width)
+        print()
     
     def execute_stage_parallel(self, stage: str) -> Dict:
         """Execute stage commands in parallel across multiple terminals"""
@@ -249,6 +425,9 @@ class MultiTerminalController:
             return {'completed': False, 'reason': 'dependencies_not_satisfied'}
         
         logger.info(f"🚀 Starting parallel execution of {stage} stage")
+        
+        # Display stage banner
+        self.display_stage_banner(stage)
         
         # Get commands for this stage
         commands = self.get_stage_commands(stage)
@@ -300,9 +479,12 @@ class MultiTerminalController:
                     
                     # Update findings immediately
                     if result['success'] and result['stdout'].strip():
-                        self.intelligent_chain.update_findings(
-                            f"[{stage.upper()}] {cmd.category}: {result['stdout'][:500]}..."
-                        )
+                        try:
+                            self.intelligent_chain.update_findings(
+                                f"[{stage.upper()}] {cmd.category}: {result['stdout'][:500]}..."
+                            )
+                        except Exception as e:
+                            logger.warning(f"⚠️  Failed to update findings: {str(e)}")
                     
                 except Exception as e:
                     logger.error(f"❌ Error in parallel execution: {str(e)}")
@@ -370,16 +552,17 @@ class MultiTerminalController:
         for stage in execution_stages:
             stage_start = time.time()
             
-            logger.info(f"\n{'='*60}")
+            # Display visual stage banner
+            self.display_stage_banner(stage)
+            
             logger.info(f"🔍 STAGE: {stage.upper()}")
-            logger.info(f"{'='*60}")
             
             # Wait for dependencies if needed
             while not self.can_execute_stage(stage):
                 logger.info(f"⏳ Waiting for {stage} dependencies...")
                 time.sleep(5)
             
-            # Execute stage in parallel
+            # Execute stage in parallel with visible terminals
             stage_result = self.execute_stage_parallel(stage)
             
             stage_time = time.time() - stage_start
@@ -395,9 +578,12 @@ class MultiTerminalController:
         # Generate comprehensive report
         self.generate_parallel_report()
         
+        # Clean up terminal sessions
+        self.cleanup_terminals()
+        
         logger.info(f"\n🎉 Parallel Penetration Test Completed!")
         logger.info(f"⏱️  Total execution time: {total_time:.2f} seconds")
-        logger.info(f"🖥️  Utilized {self.max_terminals} parallel terminals")
+        logger.info(f"🖥️  Utilized {self.max_terminals} parallel visible terminals")
     
     def generate_parallel_report(self):
         """Generate comprehensive report for parallel execution"""
@@ -445,8 +631,12 @@ This penetration test was conducted using an enhanced AI-powered agent with para
         
         # Add AI analysis
         report += "\n## AI Analysis\n\n"
-        ai_analysis = self.intelligent_chain.generate_intelligent_report()
-        report += ai_analysis
+        try:
+            ai_analysis = self.intelligent_chain.generate_intelligent_report()
+            report += ai_analysis if ai_analysis else "AI analysis temporarily unavailable."
+        except Exception as e:
+            logger.warning(f"⚠️  AI analysis failed: {str(e)}")
+            report += "AI analysis temporarily unavailable due to processing error."
         
         # Save report
         os.makedirs("results", exist_ok=True)
@@ -639,6 +829,7 @@ class EnhancedMCPAgent:
     def run_enhanced_assessment(self):
         """Run enhanced parallel assessment"""
         self.multi_terminal.run_full_parallel_assessment()
+        self.multi_terminal.cleanup_terminals()
 
 if __name__ == "__main__":
     import argparse
