@@ -1,0 +1,110 @@
+=== RECONNAISSANCE STAGE ===
+
+Command: whatweb http://testphp.vulnweb.com/
+Return Code: 0
+STDOUT:
+[1m[34mhttp://testphp.vulnweb.com/[0m [200 OK] [1mActiveX[0m[[1m[31mD27CDB6E-AE6D-11cf-96B8-444553540000[0m], [1mAdobe-Flash[0m, [1mCountry[0m[[0m[22mUNITED STATES[0m][[1m[31mUS[0m], [1mEmail[0m[[0m[22mwvs@acunetix.com[0m], [1mHTTPServer[0m[[1m[36mnginx/1.19.0[0m], [1mIP[0m[[0m[22m44.228.249.3[0m], [1mObject[0m[[0m[22mhttp://download.macromedia.com/pub/shockwave/cabs/flash/swflash.cab#version=6,0,29,0[0m][[1m[31mclsid:D27CDB6E-AE6D-11cf-96B8-444553540000[0m], [1mPHP[0m[[1m[32m5.6.40-38+ubuntu20.04.1+deb.sury.org+1[0m], [1mScript[0m[[0m[22mtext/JavaScript[0m], [1mTitle[0m[[1m[33mHome of Acunetix Art[0m], [1mX-Powered-By[0m[[0m[22mPHP/5.6.40-38+ubuntu20.04.1+deb.sury.org+1[0m], [1mnginx[0m[[1m[32m1.19.0[0m]
+
+
+==================================================
+
+Command: nikto -h http://testphp.vulnweb.com/
+Return Code: 1
+STDOUT:
+- Nikto v2.5.0
+---------------------------------------------------------------------------
++ Target IP:          44.228.249.3
++ Target Hostname:    testphp.vulnweb.com
++ Target Port:        80
++ Start Time:         2025-06-18 20:17:01 (GMT-4)
+---------------------------------------------------------------------------
++ Server: nginx/1.19.0
++ /: Retrieved x-powered-by header: PHP/5.6.40-38+ubuntu20.04.1+deb.sury.org+1.
++ /: The anti-clickjacking X-Frame-Options header is not present. See: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/X-Frame-Options
++ /: The X-Content-Type-Options header is not set. This could allow the user agent to render the content of the site in a different fashion to the MIME type. See: https://www.netsparker.com/web-vulnerability-scanner/vulnerabilities/missing-content-type-header/
++ /clientaccesspolicy.xml contains a full wildcard entry. See: https://docs.microsoft.com/en-us/previous-versions/windows/silverlight/dotnet-windows-silverlight/cc197955(v=vs.95)?redirectedfrom=MSDN
++ /clientaccesspolicy.xml contains 12 lines which should be manually viewed for improper domains or wildcards. See: https://www.acunetix.com/vulnerabilities/web/insecure-clientaccesspolicy-xml-file/
++ /crossdomain.xml contains a full wildcard entry. See: http://jeremiahgrossman.blogspot.com/2008/05/crossdomainxml-invites-cross-site.html
++ Scan terminated: 20 error(s) and 6 item(s) reported on remote host
++ End Time:           2025-06-18 20:18:21 (GMT-4) (80 seconds)
+---------------------------------------------------------------------------
++ 1 host(s) tested
+
+STDERR:
++ ERROR: Error limit (20) reached for host, giving up. Last error: error reading HTTP response
+
+
+==================================================
+
+Command: gobuster dir -u http://testphp.vulnweb.com/ -w /usr/share/wordlists/dirbuster/directory-list-2.3-medium.txt -x php,html,txt
+Return Code: 127
+STDOUT:
+
+STDERR:
+/bin/sh: 1: gobuster: not found
+
+
+==================================================
+
+Command: katana -u http://testphp.vulnweb.com/ -jc -silent | grep "=" | sort -u
+Return Code: 0
+STDOUT:
+http://testphp.vulnweb.com/artists.php?artist=1
+http://testphp.vulnweb.com/artists.php?artist=2
+http://testphp.vulnweb.com/artists.php?artist=3
+http://testphp.vulnweb.com/comment.php?aid=1
+http://testphp.vulnweb.com/comment.php?aid=2
+http://testphp.vulnweb.com/comment.php?aid=3
+http://testphp.vulnweb.com/comment.php?pid=1
+http://testphp.vulnweb.com/comment.php?pid=2
+http://testphp.vulnweb.com/comment.php?pid=3
+http://testphp.vulnweb.com/comment.php?pid=4
+http://testphp.vulnweb.com/comment.php?pid=5
+http://testphp.vulnweb.com/comment.php?pid=6
+http://testphp.vulnweb.com/comment.php?pid=7
+http://testphp.vulnweb.com/hpp/params.php?p=valid&pp=12
+http://testphp.vulnweb.com/hpp/?pp=12
+http://testphp.vulnweb.com/listproducts.php?artist=1
+http://testphp.vulnweb.com/listproducts.php?artist=2
+http://testphp.vulnweb.com/listproducts.php?artist=3
+http://testphp.vulnweb.com/listproducts.php?cat=1
+http://testphp.vulnweb.com/listproducts.php?cat=2
+http://testphp.vulnweb.com/listproducts.php?cat=3
+http://testphp.vulnweb.com/listproducts.php?cat=4
+http://testphp.vulnweb.com/pictures/1.jpg&size=160
+http://testphp.vulnweb.com/pictures/2.jpg&size=160
+http://testphp.vulnweb.com/pictures/3.jpg&size=160
+http://testphp.vulnweb.com/pictures/4.jpg&size=160
+http://testphp.vulnweb.com/pictures/5.jpg&size=160
+http://testphp.vulnweb.com/pictures/6.jpg&size=160
+http://testphp.vulnweb.com/pictures/7.jpg&size=160
+http://testphp.vulnweb.com/product.php?pic=1
+http://testphp.vulnweb.com/product.php?pic=2
+http://testphp.vulnweb.com/product.php?pic=3
+http://testphp.vulnweb.com/product.php?pic=4
+http://testphp.vulnweb.com/product.php?pic=5
+http://testphp.vulnweb.com/product.php?pic=6
+http://testphp.vulnweb.com/product.php?pic=7
+http://testphp.vulnweb.com/search.php?test=query
+http://testphp.vulnweb.com/showimage.php?file=
+http://testphp.vulnweb.com/showimage.php?file=./pictures/1.jpg
+http://testphp.vulnweb.com/showimage.php?file=./pictures/1.jpg&size=160
+http://testphp.vulnweb.com/showimage.php?file=./pictures/2.jpg
+http://testphp.vulnweb.com/showimage.php?file=./pictures/2.jpg&size=160
+http://testphp.vulnweb.com/showimage.php?file=./pictures/3.jpg
+http://testphp.vulnweb.com/showimage.php?file=./pictures/3.jpg&size=160
+http://testphp.vulnweb.com/showimage.php?file=./pictures/4.jpg
+http://testphp.vulnweb.com/showimage.php?file=./pictures/4.jpg&size=160
+http://testphp.vulnweb.com/showimage.php?file=./pictures/5.jpg
+http://testphp.vulnweb.com/showimage.php?file=./pictures/5.jpg&size=160
+http://testphp.vulnweb.com/showimage.php?file=./pictures/6.jpg
+http://testphp.vulnweb.com/showimage.php?file=./pictures/6.jpg&size=160
+http://testphp.vulnweb.com/showimage.php?file=./pictures/7.jpg
+http://testphp.vulnweb.com/showimage.php?file=./pictures/7.jpg&size=160
+
+
+==================================================
+
+Command blocked for security reasons: sqlmap -u "http://testphp.vulnweb.com/" --batch --risk=3 --level=5 --crawl=1 --forms --threads=5
+==================================================
+

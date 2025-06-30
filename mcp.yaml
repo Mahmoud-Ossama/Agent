@@ -1,0 +1,18 @@
+name: pentest-agent-sqli
+version: 0.1.0
+description: Enhanced AI-Powered Penetration Testing Agent with MCP Support
+lifecycle:
+  stages:
+    - reconnaissance
+    - enumeration
+    - scanning
+    - vulnerability_assessment
+    - exploitation
+    - reporting
+agents:
+  - name: enhanced_agent
+    description: Main intelligent penetration testing agent
+  - name: dynamic_agent
+    description: Dynamic command execution agent
+  - name: mcp_agent
+    description: MCP-based human-like agent
