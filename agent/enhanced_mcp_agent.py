@@ -264,41 +264,44 @@ class MultiTerminalController:
         return command
     
     def execute_command_in_terminal(self, cmd: ParallelCommand) -> Dict:
-        """Execute a command in a visible terminal window with human-like behavior"""
+        """Execute a command in a visible terminal window with simple direct approach"""
         terminal = self.terminals[cmd.terminal_id]
         
         logger.info(f"🎯 Terminal {cmd.terminal_id}: Opening visible terminal for {cmd.category}")
         logger.info(f"🖥️  Stage: {cmd.stage} | Command: {cmd.command[:50]}...")
         
-        # Prepare command for visible execution
-        prepared_command = self.simulate_human_typing_visible(cmd.command, cmd.terminal_id, cmd.stage)
-        
         try:
             start_time = time.time()
             
-            # Get platform-specific terminal command
-            terminal_cmd, script_file = self._get_terminal_command(cmd.terminal_id, prepared_command, cmd.stage)
+            # Simple direct approach - open terminal and run command
+            system = platform.system().lower()
             
-            # Store script file reference
-            terminal.script_file = script_file
+            if system == "windows":
+                # Simple Windows approach - open new cmd window
+                terminal_cmd = f'start "MCP Terminal {cmd.terminal_id} - {cmd.stage.upper()}" cmd /k "echo 🖥️  MCP Terminal {cmd.terminal_id} - {cmd.stage.upper()} Stage && echo 🎯 Target: {self.target_url} && echo 🧠 Thinking... && timeout /t 3 >nul && echo ⌨️  Executing: {cmd.command} && echo. && {cmd.command} && echo. && echo ✅ Command completed && pause"'
+                
+                # Execute the terminal command
+                subprocess.Popen(terminal_cmd, shell=True)
+                
+            elif system == "linux":
+                # Simple Linux approach 
+                if os.system("which gnome-terminal > /dev/null 2>&1") == 0:
+                    terminal_cmd = f'gnome-terminal --title="MCP Terminal {cmd.terminal_id} - {cmd.stage.upper()}" -- bash -c "echo \\"🖥️  MCP Terminal {cmd.terminal_id} - {cmd.stage.upper()} Stage\\"; echo \\"🎯 Target: {self.target_url}\\"; echo \\"🧠 Thinking...\\"; sleep 3; echo \\"⌨️  Executing: {cmd.command}\\"; echo; {cmd.command}; echo; echo \\"✅ Command completed\\"; read -p \\"Press Enter to close...\\""'
+                elif os.system("which xterm > /dev/null 2>&1") == 0:
+                    terminal_cmd = f'xterm -title "MCP Terminal {cmd.terminal_id} - {cmd.stage.upper()}" -e bash -c "echo \\"🖥️  MCP Terminal {cmd.terminal_id} - {cmd.stage.upper()} Stage\\"; echo \\"🎯 Target: {self.target_url}\\"; echo \\"🧠 Thinking...\\"; sleep 3; echo \\"⌨️  Executing: {cmd.command}\\"; echo; {cmd.command}; echo; echo \\"✅ Command completed\\"; read -p \\"Press Enter to close...\\""'
+                else:
+                    # Fallback to basic terminal
+                    terminal_cmd = f'x-terminal-emulator -title "MCP Terminal {cmd.terminal_id}" -e bash -c "{cmd.command}; read -p \\"Press Enter...\\""'
+                
+                os.system(terminal_cmd + " &")  # Run in background
+                
+            elif system == "darwin":  # macOS
+                terminal_cmd = f'osascript -e \'tell application "Terminal" to do script "echo \\"🖥️  MCP Terminal {cmd.terminal_id} - {cmd.stage.upper()} Stage\\"; echo \\"🎯 Target: {self.target_url}\\"; echo \\"🧠 Thinking...\\"; sleep 3; echo \\"⌨️  Executing: {cmd.command}\\"; {cmd.command}; echo \\"✅ Command completed\\""\'
+                os.system(terminal_cmd)
             
-            logger.info(f"🚀 Terminal {cmd.terminal_id}: Launching visible terminal window...")
-            
-            # Execute command in visible terminal
-            # For better control, we'll also capture output using a separate process
-            output_file = os.path.join("results", "terminal_logs", f"{cmd.stage}_terminal_{cmd.terminal_id}_output.log")
-            os.makedirs(os.path.dirname(output_file), exist_ok=True)
-            
-            # Launch visible terminal (non-blocking)
-            terminal_process = subprocess.Popen(
-                terminal_cmd,
-                shell=True,
-                cwd=terminal.current_directory
-            )
-            
-            # Also run command in background to capture output
+            # Also run command in background to capture output for processing
             result = subprocess.run(
-                prepared_command,
+                cmd.command,
                 shell=True,
                 capture_output=True,
                 text=True,
@@ -309,6 +312,9 @@ class MultiTerminalController:
             execution_time = time.time() - start_time
             
             # Save output to file
+            output_file = os.path.join("results", "terminal_logs", f"{cmd.stage}_terminal_{cmd.terminal_id}_output.log")
+            os.makedirs(os.path.dirname(output_file), exist_ok=True)
+            
             with open(output_file, "w", encoding="utf-8") as f:
                 f.write(f"Terminal {cmd.terminal_id} - {cmd.stage.upper()} Stage\n")
                 f.write(f"Command: {cmd.command}\n")
@@ -338,7 +344,6 @@ class MultiTerminalController:
             
             # Update terminal history
             terminal.session_history.append(command_result)
-            terminal.process = terminal_process
             
             # Update intelligent chain
             try:
@@ -351,7 +356,7 @@ class MultiTerminalController:
             except Exception as e:
                 logger.warning(f"⚠️  Failed to update intelligent chain: {str(e)}")
             
-            logger.info(f"✅ Terminal {cmd.terminal_id}: Command executed in visible terminal - {cmd.category} in {execution_time:.2f}s")
+            logger.info(f"✅ Terminal {cmd.terminal_id}: Visible terminal opened and command executed - {cmd.category} in {execution_time:.2f}s")
             logger.info(f"📄 Output saved to: {output_file}")
             
             return command_result
@@ -372,7 +377,7 @@ class MultiTerminalController:
                 'visible_terminal': True
             }
             
-            logger.warning(f"⏰ Terminal {cmd.terminal_id}: Visible terminal command timed out - {cmd.category} after {execution_time:.2f}s")
+            logger.warning(f"⏰ Terminal {cmd.terminal_id}: Command timed out - {cmd.category} after {execution_time:.2f}s")
             return error_result
             
         except Exception as e:
